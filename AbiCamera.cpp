@@ -1,16 +1,15 @@
 #include "AbiCamera.h"
 #include "ModuleInterface.h"
 
+#include <format>
+#include <array>
+
 using namespace std;
 
 const char* g_CameraName = "AbiCam";
 
 const char* g_PixelType_8bit = "8bit";
 const char* g_PixelType_16bit = "16bit";
-
-const char* g_CameraModelProperty = "Model";
-const char* const g_DevicePort = "COM Port";
-
 
 ///////////////////////////////////////////////////////////////////////////////
 // Exported MMDevice API
@@ -64,7 +63,7 @@ AbiCamera::AbiCamera() :
     m_bytesPerPixel(1),
     m_bitDepth(8),
     m_initialized(false),
-    m_exposureMs(10.0),
+    m_exposureMs(1000.0),
     m_roiStartX(0),
     m_roiStartY(0),
     m_thread(0)
@@ -72,37 +71,17 @@ AbiCamera::AbiCamera() :
     // call the base class method to set-up default error codes/messages
     InitializeDefaultErrorMessages();
 
+    SetErrorText(ERR_LIBRARY_INIT, "Abicamera Library initialisation failed. Make sure the device is connected and you selected the correct COM port.");
+
     // Description property
     int ret = CreateProperty(MM::g_Keyword_Description, "AbiCamera development adapter", MM::String, true);
     assert(ret == DEVICE_OK);
 
 
     // COM Port property
-    int vRet = CreatePropertyWithHandler(g_DevicePort, "Undefined", MM::String, false, &AbiCamera::OnPort, true);
-    AddAllowedValue(g_DevicePort, "Undefined");
-    if (vRet == DEVICE_OK)
-    {
-        string vComPortBaseName;
-        string vComPortAddress;
-        for (int i = 1; i <= 64; i++)
-        {
-            vComPortBaseName = "COM" + to_string(static_cast<long long>(i));
-            vComPortAddress = "\\\\.\\" + vComPortBaseName;
-            HANDLE hCom = CreateFileA(vComPortAddress.c_str(),
-                GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL, NULL);
 
-            if (hCom != INVALID_HANDLE_VALUE)
-            {
-                AddAllowedValue(g_DevicePort, vComPortBaseName.c_str());
-                CloseHandle(hCom);
-            }
-        }
-    }
-    else
-    {
-        m_constructionReturnCode = ERR_COMPORTPROPERTY_CREATION;
-    }
+    CPropertyAction* pAct = new CPropertyAction(this, &AbiCamera::OnPort);
+    CreateProperty(MM::g_Keyword_Port, "Undefined", MM::String, false, pAct, true);
 
     // create live video thread
     m_thread = new SequenceThread(this);
@@ -148,7 +127,9 @@ int AbiCamera::Initialize()
     }
 
     if (m_initialized)
+    {
         return DEVICE_OK;
+    }
 
     // set property list
     // -----------------
@@ -188,6 +169,7 @@ int AbiCamera::Initialize()
     assert(ret == DEVICE_OK);
 
     vector<string> bitDepths;
+    bitDepths.push_back("6");
     bitDepths.push_back("8");
     bitDepths.push_back("10");
     bitDepths.push_back("12");
@@ -207,14 +189,16 @@ int AbiCamera::Initialize()
     if (ret != DEVICE_OK)
         return ret;
 
+    if (DetectDevice() != MM::CanCommunicate)
+    {
+        return ERR_LIBRARY_INIT;
+    }
+    else
+    {
+        LogMessage(std::format("Successfully connected to port {}", m_port), true);
+    }
+
     m_initialized = true;
-
-    std::stringstream ss{};
-    ss << "Port : " << m_port << '\n';
-
-    LogMessage(ss.str().c_str(), true);
-
-    DetectDevice();
     return DEVICE_OK;
 }
 
@@ -237,8 +221,6 @@ MM::DeviceDetectionStatus AbiCamera::DetectDevice()
 
     // all conditions must be satisfied...
     MM::DeviceDetectionStatus result = MM::Misconfigured;
-    char answerTO[MM::MaxStrLength];
-
 
     try
     {
@@ -251,27 +233,17 @@ MM::DeviceDetectionStatus AbiCamera::DetectDevice()
         if (0 < portLowerCase.length() && 0 != portLowerCase.compare("undefined") && 0 != portLowerCase.compare("unknown"))
         {
             result = MM::CanNotCommunicate;
-            // record the default answer time out
-            GetCoreCallback()->GetDeviceProperty(m_port.c_str(), "AnswerTimeout", answerTO);
 
             // device specific default communication parameters
-            // for Arduino Duemilanova
             GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_BaudRate, "2000000");
-            // Arduino timed out in GetControllerVersion even if AnswerTimeout  = 300 ms
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "AnswerTimeout", "500.0");
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "DelayBetweenCharsMs", "0");
-            MM::Device* pS = GetCoreCallback()->GetDevice(this, m_port.c_str());
-            pS->Initialize();
-            // The first second or so after opening the serial port, the Arduino is waiting for firmwareupgrades.  Simply sleep 2 seconds.
-            CDeviceUtils::SleepMs(2000);
+            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_AnswerTimeout, "10");
+
             MMThreadGuard myLock(m_portLock);
             PurgeComPort(m_port.c_str());
 
             result = MM::CanCommunicate;
 
-            pS->Shutdown();
             // always restore the AnswerTimeout to the default
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "AnswerTimeout", answerTO);
         }
     }
     catch (...)
@@ -290,9 +262,43 @@ MM::DeviceDetectionStatus AbiCamera::DetectDevice()
 */
 int AbiCamera::SnapImage()
 {
-    GenerateImage();
-    //InsertImage();
-    return DEVICE_OK;
+    //PurgeComPort(m_port.c_str());
+    std::string command = std::format("sht {}", static_cast<int>(m_exposureMs));
+
+    auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+    }
+
+    // Wait for exposure time
+    CDeviceUtils::SleepMs(m_exposureMs + 150);
+
+    std::array<uint8_t, 2> buf{};
+    unsigned long read = 0;
+    ret = ReadFromComPort(m_port.c_str(), buf.data(), 2, read);
+    if (ret != DEVICE_OK || read != 2)
+    {
+        LogMessage(std::format("Couldn't read shot confirmation, read {} bytes", read));
+        return ret;
+    }
+
+    //PurgeComPort(m_port.c_str());
+
+    command = std::format("rid {} {}", m_binning, m_bitDepth);
+    ret = WriteToComPort(m_port.c_str(), (const unsigned char*)command.c_str(), command.length());
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+    }
+
+    CDeviceUtils::SleepMs(5000);
+
+    //GenerateImage();
+
+    return ReadImage();
+    
+    //return DEVICE_OK;
 }
 
 /**
@@ -640,6 +646,11 @@ int AbiCamera::OnBitDepth(MM::PropertyBase* pProp, MM::ActionType eAct)
         unsigned int bytesPerComponent;
 
         switch (bitDepth) {
+        case 6:
+            bytesPerComponent = 1;
+            m_bitDepth = 6;
+            ret = DEVICE_OK;
+            break;
         case 8:
             bytesPerComponent = 1;
             m_bitDepth = 8;
@@ -741,4 +752,38 @@ void AbiCamera::GenerateImage()
     double step = maxValue / maxExp;
     unsigned char* pBuf = const_cast<unsigned char*>(m_imgBuf.GetPixels());
     memset(pBuf, 128, m_imgBuf.Height() * m_imgBuf.Width() * m_imgBuf.Depth());
+}
+
+int AbiCamera::ReadImage()
+{
+    MMThreadGuard g(m_imgPixelsLock);
+
+    uint8_t* pBuf = const_cast<uint8_t*>(m_imgBuf.GetPixels());
+    unsigned long read = 0;
+    auto ret = ReadFromComPort(m_port.c_str(), pBuf, GetImageBufferSize(), read);
+    if (ret != DEVICE_OK ||
+        read != GetImageBufferSize())
+    {
+        LogMessage(std::format("Failed to read image data from port : read {} bytes", read), true);
+        LogMessageCode(ret, true);
+
+        return ERR_COM_READ_ERR;
+    }
+
+    return DEVICE_OK;
+}
+
+int AbiCamera::Help()
+{
+    PurgeComPort(m_port.c_str());
+    SendSerialCommand(m_port.c_str(), "hlp", "");
+   
+    std::string answer = {};
+    auto ret = GetSerialAnswer(m_port.c_str(), "\r\n\r\n\r\n", answer);
+    if (ret != DEVICE_OK)
+    {
+        LogMessage(std::format("Failed to read confirmation from port : read {} bytes", answer.length()), true);
+    }
+
+    return DEVICE_OK;
 }
