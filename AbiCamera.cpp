@@ -188,15 +188,6 @@ int AbiCamera::Initialize()
     if (ret != DEVICE_OK)
         return ret;
 
-    //if (DetectDevice() != MM::CanCommunicate)
-    //{
-    //    return ERR_LIBRARY_INIT;
-    //}
-    //else
-    //{
-    //    LogMessage(std::format("Successfully connected to port {}", m_port), true);
-    //}
-
     m_initialized = true;
     return DEVICE_OK;
 }
@@ -211,48 +202,6 @@ int AbiCamera::Shutdown()
 {
     m_initialized = false;
     return DEVICE_OK;
-}
-
-MM::DeviceDetectionStatus AbiCamera::DetectDevice()
-{
-    if (m_initialized)
-        return MM::CanCommunicate;
-
-    // all conditions must be satisfied...
-    MM::DeviceDetectionStatus result = MM::Misconfigured;
-
-    try
-    {
-        std::string portLowerCase = m_port;
-        for (auto its = portLowerCase.begin(); its != portLowerCase.end(); ++its)
-        {
-            *its = (char)tolower(*its);
-        }
-
-        if (0 < portLowerCase.length() && 0 != portLowerCase.compare("undefined") && 0 != portLowerCase.compare("unknown"))
-        {
-            result = MM::CanNotCommunicate;
-
-            // device specific default communication parameters
-
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_BaudRate, "2000000");
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_AnswerTimeout, "500");
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_DataBits, "8");
-            GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_DelayBetweenCharsMs, "0");
-
-            Help();
-
-            result = MM::CanCommunicate;
-
-            // always restore the AnswerTimeout to the default
-        }
-    }
-    catch (...)
-    {
-        LogMessage("Exception in DetectDevice!", false);
-    }
-
-    return result;
 }
 
 /**

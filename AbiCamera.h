@@ -24,8 +24,6 @@ public:
     int Initialize();
     int Shutdown();
 
-    MM::DeviceDetectionStatus DetectDevice();
-
     void GetName(char* name) const;
 
     // MMCamera API
