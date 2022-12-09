@@ -7,7 +7,8 @@
 
 #define ERR_UNKNOWN_MODE         102
 #define ERR_LIBRARY_INIT 103
-#define ERR_COM_READ_ERR 104
+#define ERR_IMAGE_READ 104
+#define ERR_COM_RESPONSE 120
 #define ERR_COMPORTPROPERTY_CREATION 119
 
 class SequenceThread;
