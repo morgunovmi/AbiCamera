@@ -234,8 +234,6 @@ int AbiCamera::SnapImage()
         return ERR_COM_RESPONSE;
     }
 
-    PurgeComPort(m_port.c_str());
-
     command = std::format("rid {} {}", m_binning, m_bitDepth);
     ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
     if (ret != DEVICE_OK)
@@ -244,7 +242,7 @@ int AbiCamera::SnapImage()
         return ret;
     }
 
-    CDeviceUtils::SleepMs(2000);
+    CDeviceUtils::SleepMs(1700);
 
     return ReadImage();
 }
@@ -675,9 +673,9 @@ int AbiCamera::ReadImage()
 {
     MMThreadGuard g(m_imgPixelsLock);
 
-    const auto numBytesToReceive = GetImageBufferSize() / (m_binning * m_binning);
-
     uint8_t* pBuf = const_cast<uint8_t*>(m_imgBuf.GetPixels());
+    const auto numBytesToReceive = GetImageBufferSize();
+
     unsigned long read = 0;
     auto ret = ReadFromComPort(m_port.c_str(), pBuf, numBytesToReceive, read);
     if (ret != DEVICE_OK ||
@@ -688,6 +686,17 @@ int AbiCamera::ReadImage()
 
         return ERR_IMAGE_READ;
     }
+
+    //const auto width = GetImageWidth();
+    //for (size_t i = 0; i < GetImageHeight(); ++i)
+    //{
+    //    for (size_t j = 0; j < width; ++j)
+    //    {
+    //        //*(pBuf + width * i + j) = *(bytes.data() 
+    //        //    + width / m_binning * static_cast<size_t>(i / m_binning) 
+    //        //    + static_cast<size_t>(j / m_binning));
+    //    }
+    //}
 
     return DEVICE_OK;
 }
