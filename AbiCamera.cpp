@@ -213,8 +213,8 @@ int AbiCamera::Shutdown()
 int AbiCamera::SnapImage()
 {
     PurgeComPort(m_port.c_str());
-    std::string command = std::format("sht {}", static_cast<int>(m_exposureMs));
 
+    std::string command = std::format("sht {}", static_cast<int>(m_exposureMs));
     auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
     if (ret != DEVICE_OK)
     {
@@ -222,13 +222,18 @@ int AbiCamera::SnapImage()
         return ret;
     }
 
-    // Wait for exposure time
+    // Wait for exposure time plus hardware delays
     CDeviceUtils::SleepMs(m_exposureMs + 500);
 
     std::array<uint8_t, 2> buf{};
     unsigned long read = 0;
     ret = ReadFromComPort(m_port.c_str(), buf.data(), 2, read);
-    if (ret != DEVICE_OK || read != 2)
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+        return ret;
+    }
+    if (read != 2)
     {
         LogMessage(std::format("Couldn't read shot confirmation, read {} bytes", read), true);
         return ERR_COM_RESPONSE;
@@ -628,7 +633,6 @@ int AbiCamera::OnBitDepth(MM::PropertyBase* pProp, MM::ActionType eAct)
 
 int AbiCamera::OnPort(MM::PropertyBase* Prop, MM::ActionType Act)
 {
-    int vRet = DEVICE_OK;
     if (Act == MM::BeforeGet)
     {
         Prop->Set(m_port.c_str());
@@ -637,7 +641,7 @@ int AbiCamera::OnPort(MM::PropertyBase* Prop, MM::ActionType Act)
     {
         Prop->Get(m_port);
     }
-    return vRet;
+    return DEVICE_OK;
 }
 
 
@@ -678,25 +682,16 @@ int AbiCamera::ReadImage()
 
     unsigned long read = 0;
     auto ret = ReadFromComPort(m_port.c_str(), pBuf, numBytesToReceive, read);
-    if (ret != DEVICE_OK ||
-        read != numBytesToReceive)
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+        return ret;
+    }
+    if (read != numBytesToReceive)
     {
         LogMessage(std::format("Failed to read image data from port : read {} bytes", read), false);
-        LogMessageCode(ret, true);
-
         return ERR_IMAGE_READ;
     }
-
-    //const auto width = GetImageWidth();
-    //for (size_t i = 0; i < GetImageHeight(); ++i)
-    //{
-    //    for (size_t j = 0; j < width; ++j)
-    //    {
-    //        //*(pBuf + width * i + j) = *(bytes.data() 
-    //        //    + width / m_binning * static_cast<size_t>(i / m_binning) 
-    //        //    + static_cast<size_t>(j / m_binning));
-    //    }
-    //}
 
     return DEVICE_OK;
 }
