@@ -55,6 +55,7 @@ public:
     int OnPixelType(MM::PropertyBase* pProp, MM::ActionType eAct);
     int OnBitDepth(MM::PropertyBase* pProp, MM::ActionType eAct);
     int OnPort(MM::PropertyBase* Prop, MM::ActionType Act);
+    int OnBackground(MM::PropertyBase* Prop, MM::ActionType Act);
 
 private:
     friend class SequenceThread;
@@ -72,14 +73,16 @@ private:
     int m_binning;
     int m_bytesPerPixel;
     int m_bitDepth;
+    int m_subtractBackground;
 
     double m_exposureMs;
     ImgBuffer m_imgBuf;
+    ImgBuffer m_bkgBuf;
     int m_roiStartX, m_roiStartY;
 
     int ResizeImageBuffer();
     void GenerateImage();
-    int ReadImage();
+    int ReadImage(ImgBuffer& buf);
     int Help();
     int InsertImage();
 };
