@@ -56,6 +56,8 @@ public:
     int OnBitDepth(MM::PropertyBase* pProp, MM::ActionType eAct);
     int OnPort(MM::PropertyBase* Prop, MM::ActionType Act);
     int OnBackground(MM::PropertyBase* Prop, MM::ActionType Act);
+    int OnCCDTemp(MM::PropertyBase* pProp, MM::ActionType eAct);
+    int OnCold(MM::PropertyBase* Prop, MM::ActionType Act);
 
 private:
     friend class SequenceThread;
@@ -74,6 +76,8 @@ private:
     int m_bytesPerPixel;
     int m_bitDepth;
     int m_subtractBackground;
+    int m_cold;
+    double m_ccdT;
 
     double m_exposureMs;
     ImgBuffer m_imgBuf;

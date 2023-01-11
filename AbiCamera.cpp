@@ -66,14 +66,16 @@ AbiCamera::AbiCamera() :
     m_roiStartX(0),
     m_roiStartY(0),
     m_thread(0),
-    m_subtractBackground(true)
+    m_subtractBackground(1),
+    m_ccdT(0.0),
+    m_cold(0)
 {
     // call the base class method to set-up default error codes/messages
     InitializeDefaultErrorMessages();
 
     SetErrorText(ERR_LIBRARY_INIT, "Abicamera Library initialisation failed. Make sure the device is connected and you selected the correct COM port.");
     SetErrorText(ERR_IMAGE_READ, "Couldn't read all image bytes");
-    SetErrorText(ERR_COM_RESPONSE, "Error with response from com port");
+    SetErrorText(ERR_COM_RESPONSE, "Error with response from com port, maybe try again");
 
     // Description property
     int ret = CreateProperty(MM::g_Keyword_Description, "AbiCamera development adapter", MM::String, true);
@@ -83,6 +85,7 @@ AbiCamera::AbiCamera() :
 
     CPropertyAction* pAct = new CPropertyAction(this, &AbiCamera::OnPort);
     CreateProperty(MM::g_Keyword_Port, "Undefined", MM::String, false, pAct, true);
+
 
     // create live video thread
     m_thread = new SequenceThread(this);
@@ -199,18 +202,22 @@ int AbiCamera::Initialize()
     if (ret != DEVICE_OK)
         return ret;
 
-    //auto* d = GetCoreCallback()->GetDevice(this, m_port.c_str());
-    //d->Initialize();
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_AnswerTimeout, "500");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_BaudRate, "2000000");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "DTR", "Disable");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_DataBits, "8");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_DelayBetweenCharsMs, "0.0000");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "Fast USB to Serial", "Disable");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_Handshaking, "Off");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_Parity, "None");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), MM::g_Keyword_StopBits, "1");
-    //GetCoreCallback()->SetDeviceProperty(m_port.c_str(), "Verbose", "1");
+    // camera temperature
+    pAct = new CPropertyAction(this, &AbiCamera::OnCCDTemp);
+    ret = CreateFloatProperty(MM::g_Keyword_CCDTemperature, 0, true, pAct);
+    if (ret != DEVICE_OK)
+        return ret;
+    SetPropertyLimits(MM::g_Keyword_CCDTemperature, -100, 10);
+
+    // Subtract background
+    pAct = new CPropertyAction(this, &AbiCamera::OnCold);
+    ret = CreateIntegerProperty("Cool camera", 1, false, pAct);
+    assert(ret == DEVICE_OK);
+
+    vector<string> coldOptions{ "0", "1" };
+    ret = SetAllowedValues("Cool camera", coldOptions);
+    if (ret != DEVICE_OK)
+        return ret;
 
 
     m_initialized = true;
@@ -331,9 +338,9 @@ int AbiCamera::SnapImage()
     if (m_subtractBackground)
     {
         std::transform((uint8_t*)m_imgBuf.GetPixels(), (uint8_t*)m_imgBuf.GetPixels() + GetImageBufferSize(),
-            (uint8_t*)m_bkgBuf.GetPixels(), (uint8_t*)m_imgBuf.GetPixels(), [](auto& a, auto& b) { return a - b; });
+            (uint8_t*)m_bkgBuf.GetPixels(), (uint8_t*)m_imgBuf.GetPixels(), [](auto a, auto b) { return a - b; });
     }
-
+    
     return DEVICE_OK;
 }
 
@@ -713,6 +720,60 @@ int AbiCamera::OnBackground(MM::PropertyBase* Prop, MM::ActionType Act)
     return DEVICE_OK;
 }
 
+int AbiCamera::OnCCDTemp(MM::PropertyBase* pProp, MM::ActionType eAct)
+{
+    if (eAct == MM::BeforeGet)
+    {
+        pProp->Set(m_ccdT);
+    }
+    else if (eAct == MM::AfterSet)
+    {
+        pProp->Get(m_ccdT);
+    }
+    return DEVICE_OK;
+}
+
+int AbiCamera::OnCold(MM::PropertyBase* Prop, MM::ActionType Act)
+{
+    if (Act == MM::BeforeGet)
+    {
+        Prop->Set((long)m_cold);
+    }
+    else if (Act == MM::AfterSet)
+    {
+        long cold;
+        Prop->Get(cold);
+
+        // Send cold command to chip
+        std::string command = std::format("cld {}", cold);
+        auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "\n");
+        if (ret != DEVICE_OK)
+        {
+            LogMessageCode(ret, true);
+            return ret;
+        }
+
+        CDeviceUtils::SleepMs(100);
+
+        uint8_t ans = 0;
+        unsigned long read = 0;
+        ret = ReadFromComPort(m_port.c_str(), &ans, 1, read);
+        if (ret != DEVICE_OK)
+        {
+            LogMessageCode(ret, true);
+            return ret;
+        }
+        if (read != 1)
+        {
+            LogMessage("Couldn't read cold response");
+            return ERR_COM_RESPONSE;
+        }
+        LogMessage(std::format("Got cold response : {}", ans), true);
+        m_cold = cold;
+    }
+    return DEVICE_OK;
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // Private AbiCamera methods
 ///////////////////////////////////////////////////////////////////////////////
@@ -723,6 +784,7 @@ int AbiCamera::OnBackground(MM::PropertyBase* Prop, MM::ActionType Act)
 int AbiCamera::ResizeImageBuffer()
 {
     m_imgBuf.Resize(IMAGE_WIDTH / m_binning, IMAGE_HEIGHT / m_binning, m_bytesPerPixel);
+    m_bkgBuf.Resize(IMAGE_WIDTH / m_binning, IMAGE_HEIGHT / m_binning, m_bytesPerPixel);
 
     return DEVICE_OK;
 }
@@ -745,21 +807,48 @@ int AbiCamera::ReadImage(ImgBuffer& buf)
 {
     MMThreadGuard g(m_imgPixelsLock);
 
-    uint8_t* pBuf = const_cast<uint8_t*>(buf.GetPixels());
     const auto numBytesToReceive = GetImageBufferSize();
+    std::vector<uint8_t> buffer(2 * numBytesToReceive);
 
+    const unsigned long chunkSize = 20000;
+
+    unsigned long totalRead = 0;
     unsigned long read = 0;
-    auto ret = ReadFromComPort(m_port.c_str(), pBuf, numBytesToReceive, read);
-    if (ret != DEVICE_OK)
+    do
     {
-        LogMessageCode(ret, true);
-        return ret;
-    }
-    if (read != numBytesToReceive)
+        auto ret = ReadFromComPort(m_port.c_str(), buffer.data() + totalRead, chunkSize, read);
+        if (ret != DEVICE_OK)
+        {
+            LogMessageCode(ret, true);
+            return ret;
+        }
+        LogMessage(std::format("Read {} bytes this time", read), false);
+        totalRead += read;
+        //pBuf += read;
+        CDeviceUtils::SleepMs(100);
+
+    } while (read != 0 && totalRead < numBytesToReceive);
+
+    if (totalRead != numBytesToReceive)
     {
-        LogMessage(std::format("Failed to read image data from port : read {} bytes", read), false);
+        LogMessage(std::format("Failed to read image data from port : read {} bytes", totalRead), false);
         return ERR_IMAGE_READ;
     }
+
+    buf.SetPixels(buffer.data());
+
+    //unsigned long read = 0;
+    //auto ret = ReadFromComPort(m_port.c_str(), pBuf, numBytesToReceive, read);
+    //if (ret != DEVICE_OK)
+    //{
+    //    LogMessageCode(ret, true);
+    //    return ret;
+    //}
+    //if (read != numBytesToReceive)
+    //{
+    //    LogMessage(std::format("Failed to read image data from port : read {} bytes", read), false);
+    //    return ERR_IMAGE_READ;
+    //}
 
     return DEVICE_OK;
 }
