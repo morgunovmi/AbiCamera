@@ -5,6 +5,8 @@
 #include "DeviceThreads.h"
 #include "ImgBuffer.h"
 
+#include <chrono>
+
 #define ERR_UNKNOWN_MODE         102
 #define ERR_LIBRARY_INIT 103
 #define ERR_IMAGE_READ 104
@@ -64,6 +66,8 @@ private:
     static const int IMAGE_WIDTH = 512;
     static const int IMAGE_HEIGHT = 512;
     static const int MAX_BIT_DEPTH = 12;
+    static const int TEMP_READ_DELAY_MS = 200;
+    static const int ADC_V = 330;
 
     std::string m_port;
     MMThreadLock m_portLock;
@@ -78,6 +82,7 @@ private:
     int m_subtractBackground;
     int m_cold;
     double m_ccdT;
+    std::chrono::high_resolution_clock::time_point m_lastTempRead;
 
     double m_exposureMs;
     ImgBuffer m_imgBuf;
