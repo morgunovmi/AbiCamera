@@ -72,7 +72,6 @@ private:
     std::string m_port;
     MMThreadLock m_portLock;
     bool m_initialized;
-    int m_constructionReturnCode;
 
     SequenceThread* m_thread;
     MMThreadLock m_imgPixelsLock;

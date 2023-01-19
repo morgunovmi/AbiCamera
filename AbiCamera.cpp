@@ -57,7 +57,6 @@ MODULE_API void DeleteDevice(MM::Device* pDevice)
 * perform most of the initialization in the Initialize() method.
 */
 AbiCamera::AbiCamera() :
-    m_constructionReturnCode(DEVICE_OK),
     m_binning(1),
     m_bytesPerPixel(1),
     m_bitDepth(8),
@@ -86,10 +85,6 @@ AbiCamera::AbiCamera() :
 
     CPropertyAction* pAct = new CPropertyAction(this, &AbiCamera::OnPort);
     CreateProperty(MM::g_Keyword_Port, "Undefined", MM::String, false, pAct, true);
-
-
-    // create live video thread
-    m_thread = new SequenceThread(this);
 }
 
 /**
@@ -126,11 +121,6 @@ void AbiCamera::GetName(char* name) const
 */
 int AbiCamera::Initialize()
 {
-    if (m_constructionReturnCode != DEVICE_OK)
-    {
-        return m_constructionReturnCode;
-    }
-
     if (m_initialized)
     {
         return DEVICE_OK;
@@ -220,7 +210,6 @@ int AbiCamera::Initialize()
     if (ret != DEVICE_OK)
         return ret;
 
-
     m_initialized = true;
     return DEVICE_OK;
 }
@@ -290,8 +279,6 @@ int AbiCamera::SnapImage()
             return ret;
         }
 
-        //CDeviceUtils::SleepMs(500);
-
         ret = ReadImage(m_bkgBuf);
         if (ret != DEVICE_OK)
         {
@@ -340,8 +327,6 @@ int AbiCamera::SnapImage()
         LogMessageCode(ret, true);
         return ret;
     }
-
-    //CDeviceUtils::SleepMs(500);
 
     ret = ReadImage(m_imgBuf);
     if (ret != DEVICE_OK)
