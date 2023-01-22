@@ -181,17 +181,6 @@ int AbiCamera::Initialize()
     if (ret != DEVICE_OK)
         return ret;
 
-    // synchronize all properties
-    // --------------------------
-    ret = UpdateStatus();
-    if (ret != DEVICE_OK)
-        return ret;
-
-    // setup the buffer
-    // ----------------
-    ret = ResizeImageBuffer();
-    if (ret != DEVICE_OK)
-        return ret;
 
     // camera temperature
     pAct = new CPropertyAction(this, &AbiCamera::OnCCDTemp);
@@ -207,6 +196,18 @@ int AbiCamera::Initialize()
 
     vector<string> coldOptions{ "0", "1" };
     ret = SetAllowedValues("Cool camera", coldOptions);
+    if (ret != DEVICE_OK)
+        return ret;
+
+    // synchronize all properties
+    // --------------------------
+    ret = UpdateStatus();
+    if (ret != DEVICE_OK)
+        return ret;
+
+    // setup the buffer
+    // ----------------
+    ret = ResizeImageBuffer();
     if (ret != DEVICE_OK)
         return ret;
 
@@ -238,41 +239,7 @@ int AbiCamera::SnapImage()
 
     if (m_subtractBackground)
     {
-        // Snap 0 exposure image for background
-        std::string command = std::format("sht 0");
-        auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
-        if (ret != DEVICE_OK)
-        {
-            LogMessageCode(ret, true);
-            return ret;
-        }
-
-        // Wait for exposure time(0 ms) plus hardware delays
-        CDeviceUtils::SleepMs(700);
-
-        std::array<uint8_t, 2> buf{};
-        unsigned long read = 0;
-        unsigned long totalRead = 0;
-        do
-        {
-            ret = ReadFromComPort(m_port.c_str(), buf.data() + totalRead, 2, read);
-            if (ret != DEVICE_OK)
-            {
-                LogMessageCode(ret, true);
-                return ret;
-            }
-            totalRead += read;
-
-        } while (totalRead < 2);
-
-        if (read != 2)
-        {
-            LogMessage(std::format("Couldn't read shot confirmation, read {} bytes", read), true);
-            return ERR_COM_RESPONSE;
-        }
-
-        command = std::format("rid {} {}", m_binning, m_bitDepth);
-        ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
+        auto ret = ShotAndResponse(0);
         if (ret != DEVICE_OK)
         {
             LogMessageCode(ret, true);
@@ -287,46 +254,7 @@ int AbiCamera::SnapImage()
         }
     }
 
-    // Snap actual image
-    std::string command = std::format("sht {}", static_cast<int>(m_exposureMs));
-    auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
-    if (ret != DEVICE_OK)
-    {
-        LogMessageCode(ret, true);
-        return ret;
-    }
-
-    // Wait for exposure time plus hardware delays
-    CDeviceUtils::SleepMs(m_exposureMs + 700);
-
-    std::array<uint8_t, 2> buf = {};
-    unsigned long read = 0;
-    unsigned long totalRead = 0;
-    do
-    {
-        ret = ReadFromComPort(m_port.c_str(), buf.data() + totalRead, 2, read);
-        if (ret != DEVICE_OK)
-        {
-            LogMessageCode(ret, true);
-            return ret;
-        }
-        totalRead += read;
-
-    } while (totalRead < 2);
-
-    if (read != 2)
-    {
-        LogMessage(std::format("Couldn't read shot confirmation, read {} bytes", read), true);
-        return ERR_COM_RESPONSE;
-    }
-
-    command = std::format("rid {} {}", m_binning, m_bitDepth);
-    ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
-    if (ret != DEVICE_OK)
-    {
-        LogMessageCode(ret, true);
-        return ret;
-    }
+    auto ret = ShotAndResponse(m_exposureMs);
 
     ret = ReadImage(m_imgBuf);
     if (ret != DEVICE_OK)
@@ -896,6 +824,52 @@ int AbiCamera::Help()
         LogMessage(std::format("Failed to read confirmation from port : read {} bytes", answer.length()), true);
     }
     LogMessage(answer.c_str(), false);
+
+    return DEVICE_OK;
+}
+
+int AbiCamera::ShotAndResponse(double exposure)
+{
+    std::string command = std::format("sht {}", static_cast<int>(exposure));
+    auto ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+        return ret;
+    }
+
+    // Wait for exposure time plus hardware delays
+    CDeviceUtils::SleepMs(exposure + 700);
+
+    std::array<uint8_t, 2> buf{};
+    unsigned long read = 0;
+    unsigned long totalRead = 0;
+    size_t numIters = 0;
+    do
+    {
+        ret = ReadFromComPort(m_port.c_str(), buf.data() + totalRead, 2, read);
+        if (ret != DEVICE_OK)
+        {
+            LogMessageCode(ret, true);
+            return ret;
+        }
+        totalRead += read;
+
+    } while (totalRead < 2 && numIters++ < 10);
+
+    if (totalRead != 2)
+    {
+        LogMessage(std::format("Couldn't read shot confirmation, read {} bytes", read), true);
+        return ERR_COM_RESPONSE;
+    }
+
+    command = std::format("rid {} {}", m_binning, m_bitDepth);
+    ret = SendSerialCommand(m_port.c_str(), command.c_str(), "");
+    if (ret != DEVICE_OK)
+    {
+        LogMessageCode(ret, true);
+        return ret;
+    }
 
     return DEVICE_OK;
 }

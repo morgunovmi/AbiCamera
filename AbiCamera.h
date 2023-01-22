@@ -90,6 +90,7 @@ private:
 
     int ResizeImageBuffer();
     void GenerateImage();
+    int ShotAndResponse(double exposure);
     int ReadImage(ImgBuffer& buf);
     int Help();
     int InsertImage();
